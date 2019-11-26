@@ -1,0 +1,266 @@
+---
+title: "Report3"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+## Load the R packages
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+library(knitr)
+library(readr)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(purrr)
+library(httr)
+library(DBI)
+library(tibble)
+library(leaflet)
+library(ggmap)
+```
+
+## Preparations: connect to the database and get the individual tables
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+politicians <- dbConnect(RSQLite::SQLite(), "zh_politicians.db")
+
+addresses    <- DBI::dbGetQuery(politicians, "SELECT * FROM ADDRESSES;")
+affiliations <- DBI::dbGetQuery(politicians, "SELECT * FROM AFFILIATIONS;")
+mandates     <- DBI::dbGetQuery(politicians, "SELECT * FROM MANDATES;")
+persons      <- DBI::dbGetQuery(politicians, "SELECT * FROM persons;")
+```
+
+## Part 1
+Do some data cleaning: when the current politician is still active (i.e. MANDATE_END_YEAR is equal to 0), we set the year to 0. Remove politicians where either the MANDATE_START_YEAR oder MANDATE_END_YEAR is equal to zero.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+mandates_cleaned <- mandates %>%
+  filter((MANDATE_START_YEAR > 0) & (MANDATE_END_YEAR > 0))
+```         
+
+Pull the start and end year to compute all the years the politicians were active:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+start_dates <- mandates_cleaned %>% pull(MANDATE_START_YEAR)
+end_dates   <- mandates_cleaned %>% pull(MANDATE_END_YEAR)
+range_dates <- map2(start_dates, end_dates, seq)
+```
+
+We use the *list-colum* function to get all the mandates per year:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+mandates_short_and_cleaned <- mandates_cleaned %>%
+  mutate(FULL_YEARS = range_dates) %>%
+  unnest(FULL_YEARS) %>%
+  select(FULL_YEARS, ASSEMBLY)
+```
+
+Then we need to summarize all the mandates per year and assembly type:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+mandates_short_and_cleaned_summarized <- mandates_short_and_cleaned %>%
+  group_by(FULL_YEARS, ASSEMBLY) %>%
+  summarize(TOTAL_MANDATES = n())
+```
+
+Now we do the plot:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+ggplot(mandates_short_and_cleaned_summarized, aes(x=FULL_YEARS, y=TOTAL_MANDATES, color=ASSEMBLY)) +
+  geom_line()
+```
+
+## Part 2
+
+Do the initial data cleaning for the PERSONS table of the database and rename the ID column for the merge in the next step:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+persons_cleaned <- persons %>%
+  filter((GENDER == 'w') | (GENDER == 'm')) %>%
+  rename(PERSON_ID = ID)
+```         
+
+Now merge the relevant data of the two tables:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+mandates_persons_cleaned <- mandates_cleaned %>% 
+  full_join(persons_cleaned)
+```   
+
+Re-do the steps from Part 1 for this merged table (there are certainly more elegant ways to copy the result from Part 1 instead of re-doing the calculations - but I decided on this approach to make sure the results are correct due to the individual data cleaning of the tables):
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Cleaning negative mandates
+mandates_persons_cleaned <- mandates_persons_cleaned %>%
+  mutate(DIFFERENCE = (MANDATE_END_YEAR-MANDATE_START_YEAR)) %>%
+  filter(DIFFERENCE>=0)
+
+# Unnesting and selecting the relevant columns
+rm(start_dates, end_dates, range_dates)
+start_dates <- mandates_persons_cleaned %>% pull(MANDATE_START_YEAR)
+end_dates   <- mandates_persons_cleaned %>% pull(MANDATE_END_YEAR)
+range_dates <- map2(start_dates, end_dates, seq)
+mandates_persons_short_and_cleaned <- mandates_persons_cleaned %>%
+  mutate(FULL_YEARS = range_dates) %>%
+  unnest(FULL_YEARS) %>%
+  select(FULL_YEARS, ASSEMBLY, GENDER)
+```
+
+Then we need to summarize all the mandates per year and assembly type:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+mandates_persons_short_and_cleaned_summarized <- mandates_persons_short_and_cleaned %>%
+  group_by(FULL_YEARS, ASSEMBLY, GENDER) %>%
+  summarize(TOTAL_MANDATES = n())
+```
+
+Now we do the plot:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+ggplot(mandates_persons_short_and_cleaned_summarized,aes(x=FULL_YEARS, y=TOTAL_MANDATES, color=GENDER)) +
+  geom_line() +
+  facet_grid(cols=vars(ASSEMBLY))
+```
+
+## Part 3
+
+Start with the usual data cleaning and data unnesting:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+affiliations_cleaned <- affiliations %>%
+  mutate(PERIOD = (AFFILIATION_END_YEAR - AFFILIATION_START_YEAR)) %>%
+  filter(PERIOD > 0)
+
+rm(start_dates, end_dates, range_dates)  
+start_dates <- affiliations_cleaned %>% pull(AFFILIATION_START_YEAR)
+end_dates   <- affiliations_cleaned %>% pull(AFFILIATION_END_YEAR)
+range_dates <- map2(start_dates, end_dates, seq)
+
+affiliations_2000 <- affiliations_cleaned %>%
+  mutate(FULL_YEARS = range_dates) %>%
+  unnest(FULL_YEARS) %>%
+  filter(FULL_YEARS==2000) %>%
+  select(ID, PARTY) %>%
+  group_by(PARTY) %>%
+  summarize(SEATS = n()) %>%
+  mutate(PROP = 100*SEATS / sum(SEATS))
+```
+
+Now we do the plot:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+ggplot(affiliations_2000, aes(x = "", y = PROP, fill = PARTY)) +
+  geom_bar(width = 1, stat = "identity", color = "white") +
+  coord_polar("y", start = 0)
+```
+
+## Part 4
+
+Start again with data manipulation tasks:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+affiliations_cleaned_and_summarized <- affiliations_cleaned %>%
+  mutate(FULL_YEARS = range_dates) %>%
+  unnest(FULL_YEARS) %>%
+  group_by(FULL_YEARS, PARTY) %>%
+  summarize(TOTAL_MANDATES = n())
+```
+
+Now we do the plot but select only a couple of parties and limit the time period since 1950:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+  affiliations_cleaned_and_summarized %>%
+  filter((PARTY=="SVP") | (PARTY=="SP")  | (PARTY=="Grüne")  | (PARTY=="FDP")  | (PARTY=="CVP")  | (PARTY=="GLP")) %>%
+  ggplot(aes(x=FULL_YEARS, y=TOTAL_MANDATES, color=PARTY)) +  geom_line() + xlim(1950, 2020)
+```
+
+## Part 5
+
+Start again with data manipulation tasks of the PERSONS table:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+persons[persons==""]<-NA
+persons %>% as_tibble() %>%
+  filter(as.numeric(YEAR_OF_DEATH)>0 & as.numeric(YEAR_OF_BIRTH>0) & !is.na(TITLE)) %>%
+  mutate(LIFE_SPAN = (as.numeric(YEAR_OF_DEATH) - as.numeric(YEAR_OF_BIRTH))) %>%
+  summarise(AVERAGE_LIFE_SPAN = mean(LIFE_SPAN))
+```
+The average life span of the politicians who have a YEAR_OF_DEATH in the data, the average life span was 74.2 years. Now we select two different titles and the plot clearly shows that the life spans between different academic titles differs substantially:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+persons %>% as_tibble() %>%
+  filter(as.numeric(YEAR_OF_DEATH)>0 & as.numeric(YEAR_OF_BIRTH)>0) %>%
+  mutate(LIFE_SPAN = (as.numeric(YEAR_OF_DEATH) - as.numeric(YEAR_OF_BIRTH))) %>%
+  filter((TITLE=="Dr.") | (TITLE=="lic. iur.")) %>%
+  ggplot(aes(TITLE, LIFE_SPAN)) + geom_boxplot()
+```
+
+## Part 6
+
+The following computations are based on the previously merged MANDATES and PERSONS tables after some data cleaning (i.e. that there is known start and end date of the mandate):
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+mandates_persons_cleaned %>%
+  as_tibble() %>%
+  unite(FULLNAME, FIRSTNAME, LASTNAME, sep = ' ') %>%
+  group_by(PERSON_ID) %>%
+  mutate(MANDATES_BY_PERSON = n()) %>%
+  arrange(desc(MANDATES_BY_PERSON)) %>%
+  select(FULLNAME, MANDATES_BY_PERSON) %>%
+  unique() %>%
+  head(10) %>%
+  ggplot(aes(y=MANDATES_BY_PERSON, x=FULLNAME)) +
+  geom_bar(stat ="identity") + coord_flip()
+```
+
+## Part 7
+
+Re-do some previous calculations for the MANDATES data:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+rm(start_dates,end_dates,range_dates)
+start_dates <- mandates_cleaned %>% pull(MANDATE_START_YEAR)
+end_dates   <- mandates_cleaned %>% pull(MANDATE_END_YEAR)
+range_dates <- map2(start_dates, end_dates, seq)
+```
+
+The basic idea is here to calcalature for each politician and for each year the standard deviation of his oder her mandates: if the standard deviation of the mandate IDs is non-zero, then the politician has several mandate IDs for a given year:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+mandates_cleaned %>%
+  mutate(FULL_YEARS = range_dates) %>%
+  unnest(FULL_YEARS) %>%
+  group_by(PERSON_ID, FULL_YEARS) %>%
+  summarize(N_MANDATES = sd(ID)) %>%
+  pull(N_MANDATES) %>%
+  unique() %>%
+  length()
+```
+Thus we have several politicians with multiple mandates at the same time.
+
+## Part 8
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+affiliations %>% as_tibble() %>%
+  group_by(PERSON_ID) %>%
+  summarize(PARTY_MEMBERSHIP = n()) %>%
+  filter(PARTY_MEMBERSHIP > 1) %>%
+  summarize(n())
+```
+Yes, there were in total 1351 Politicians who were affiliated to more than one political party.
+
+## Part 9
+
+Select 20 Addresses sort of randomly...
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+addresses[addresses==""]<-NA
+
+selection <- addresses %>%
+  filter(!is.na(STREET) & !is.na(HOUSE_NUMBER) & !is.na(POSTAL_CODE) & !is.na(CITY)) %>%
+  unite(LOCATION, STREET, CITY , sep = ' ') %>%
+  head(20) 
+```
+As I'd like not to register with Google to get the API key, I looked up some addressess manually with Google's Geocoding service based on the tibble above:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+#Im Baumgarten Greifensee: 47,371, 8.676
+#Lägernstrasse Schleinikon: 47.485, 8.415
+#Frohbühlstrasse Opfikon: 47.429, 8.555
+```
+
+Now we can do the plot - due to privacy reasons, only the Person-ID of the politician is provided in the popup:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+m <- leaflet() %>%
+  addTiles() %>%
+  addMarkers(lat=47,371, lng=8.676, popup="Person-ID 1659 of zh_politicians.db.zip") %>%
+  addMarkers(lat=47.485, lng=8.415, popup="Person-ID 1834 of zh_politicians.db.zip") %>%
+  addMarkers(lat=47.429, lng=8.555, popup="Person-ID 1893 of zh_politicians.db.zip")
+m  # Print the map
+```

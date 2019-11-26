@@ -1,0 +1,81 @@
+---
+title: "Report5"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+## Load the R packages
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+library(knitr)
+library(readr)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(purrr)
+library(httr)
+library(tibble)
+```
+
+## Part 1
+
+Sending some example queries to Movie DB with my API key:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# What are the highest grossing dramas from 2010?
+rm(data, data_content)
+data <-  httr::GET("https://api.themoviedb.org/3/discover/movie?%with_genres=18&primary_release_year=2010&sort_by=revenue.desc&api_key=15079d94fcca66e5a038ec57e3f32000")
+data_content <- httr::content(data)
+```
+The 3 highest grossing dramas from 2010 are `r purrr::pluck(data_content, "results", 1, "original_title")`, `r purrr::pluck(data_content, "results", 2, "original_title")`, `r purrr::pluck(data_content, "results", 3, "original_title")`.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Have Will Ferrell and Liam Neeson even been in a movie together?
+rm(data, data_content)
+data <-  httr::GET("https://api.themoviedb.org/3/discover/movie?&with_cast=3896&with_cast=23659&api_key=15079d94fcca66e5a038ec57e3f32000")
+data_content <- httr::content(data)
+```
+After inspecting the content of the GET response, the two actors Will Ferrell and Liam Neeson have not been in a movie together.
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Can you find kids movies with Tom Cruise in it?
+rm(data, data_content)
+data <-  httr::GET("https://api.themoviedb.org/3/discover/movie?&with_cast=500&certification_country=US&certification.lte=G&api_key=15079d94fcca66e5a038ec57e3f32000")
+data_content <- httr::content(data)
+```
+After inspecting the content of the GET response, the Tom Cruise has not featured in a kids movie.
+
+## Part 2
+
+Search for the ID of "Pixar":
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+rm(data, data_content)
+data <-  httr::GET("https://api.themoviedb.org/3/search/company?api_key=15079d94fcca66e5a038ec57e3f32000&query=Pixar")
+data_content <- httr::content(data, as = "parsed")
+```
+The Company ID is `r purrr::pluck(data_content, "results", 1, "id")`
+
+## Part 3
+
+Here we write a query that will search all the Pixar movies by descending revenue, which are then put into a tibble:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Get the Pixar movies and sort them by descending revenue
+rm(data, data_content)
+data <-  httr::GET("https://api.themoviedb.org/3/discover/movie?%with_companies=3&sort_by=revenue.desc&api_key=15079d94fcca66e5a038ec57e3f32000")
+data_content <- httr::content(data, as = "parsed")
+# Convert them to a tibble
+n_movies <- 20
+titles <- vector("character", length(n_movies))
+popularity <- vector("character", length(n_movies))
+for (i in 1:n_movies) {
+  titles[i] <- purrr::pluck(data_content, "results", i, "original_title")
+  popularity[i] <- purrr::pluck(data_content, "results", i, "popularity")
+}
+movie_tibble <- as_tibble(titles) %>%
+  rename(TITLE = value) %>%
+  mutate(POPULARITY = popularity)
+movie_tibble
+```
+The extraction of the movie title and the popularity could have been done with a combination of the map() and pluck() command, but for I opted for the sort of archaic solution with a simple for-loop.

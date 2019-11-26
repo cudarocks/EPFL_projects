@@ -1,0 +1,126 @@
+---
+title: "Report1"
+output: pdf_document
+---
+
+## Load the R packages
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+library(knitr)
+library(readr)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(stringr)
+```
+
+## Load the data
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+students <- read_csv("students.csv")
+professors <- read_csv("professors.csv")
+```
+
+## Tidy data and compute the sum of answers
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# rename column names for easier handling
+
+students <- students %>%
+  rename(
+    totally_disagree = 'Totally Disagree',
+    disagree = 'Disagree',
+    agree = 'Agree',
+    totally_agree = 'Totally agree'
+    )
+
+professors <- professors %>%
+  rename(
+    totally_disagree = 'Totally Disagree',
+    disagree = 'Disagree',
+    agree = 'Agree',
+    totally_agree = 'Totally agree'
+    )
+
+# compute all the answers to each question
+students <- students %>%
+ mutate(total_answers = totally_disagree + disagree + agree + totally_agree)
+
+professors <- professors %>%
+ mutate(total_answers = totally_disagree + disagree + agree + totally_agree)
+```
+
+The total number of answers obtained from students is `r students %>% summarize(sum(total_answers))`.
+
+The total number of answers obtained from professors is `r professors %>% summarize(sum(total_answers))`.
+
+Each question does *not* have the same number of answers: the numbers of answers obtained from students ranges from `r students %>% summarize(min(total_answers))` to `r students %>% summarize(max(total_answers))`, whereas the numbers of answers obtained from professors ranges from `r professors %>% summarize(min(total_answers))` to `r professors %>% summarize(max(total_answers))`.
+
+## The plot - data crunching
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# convert shape of tibble and remove total_answer column
+
+students <- select(students, -total_answers)
+students_gathered <- students %>%
+  gather(key = "answer_type",
+         value = "number_of_response",
+         totally_disagree,
+         disagree,
+         agree,
+         totally_agree)
+
+students_gathered <- students_gathered %>%
+  rename(question_number = 'X1')
+
+students_gathered <- students_gathered %>%
+  add_column(class = 'students')
+  
+professors <- select(professors, -total_answers)
+professors_gathered <- professors %>%
+  gather(key = "answer_type",
+         value = "number_of_response",
+         totally_disagree,
+         disagree,
+         agree,
+         totally_agree)
+
+professors_gathered <- professors_gathered %>%
+  rename(question_number = 'X1')
+
+professors_gathered <- professors_gathered %>%
+  add_column(class = 'professors')
+
+# execute a full join such that we have one final tibble
+
+final_data <- students_gathered %>% full_join(professors_gathered)
+```
+
+## The plot - visuals
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+ggplot(final_data,
+       aes(x=answer_type,y=number_of_response, fill=class)) +
+geom_bar(stat ="identity", position=position_dodge()) +
+facet_wrap( ~ question_number, ncol=5) +
+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+```
+
+## The mode
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+my_names <- names(students)
+
+for (p in 1:length(students$X1)) {
+  ind <- c(students[p,2:length(my_names)]==max(students[p,2:length(my_names)]))
+  print(paste("Students: Mode of Question",toString(p),"is",my_names[2:length(my_names)][ind],sep = " "))
+  rm(ind)
+
+  ind <- c(professors[p,2:length(my_names)]==max(professors[p,2:length(my_names)]))
+  print(paste("Professors: Mode of Question",toString(p),"is",my_names[2:length(my_names)][ind],sep = " "))
+  rm(ind)
+}
+
+
+```

@@ -1,0 +1,193 @@
+---
+title: "Report4"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+## Load the R packages
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+library(knitr)
+library(readr)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(purrr)
+library(httr)
+library(tibble)
+library(rvest)
+library(xml2)
+library(leaflet)
+library(ggmap)
+```
+
+## Preparations: connect to the website and get the data for the necessary variables:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+page_html <- xml2::read_html("https://epfl-exts.github.io/rental-scrape/")
+# location
+location <- page_html %>%
+  rvest::html_nodes("div.address") %>%
+  html_text()
+# price
+price <- page_html %>%
+  rvest::html_nodes("div.price span.float-right") %>%
+  rvest::html_nodes("strong") %>%
+  html_text()
+# object_type
+object_type <- page_html %>%
+  rvest::html_nodes("div.object-type") %>%
+  html_text()
+# rooms
+rooms <- page_html %>%
+  rvest::html_nodes("div.rooms") %>%
+  rvest::html_nodes("strong") %>% 
+  html_text()
+# living_space
+living_space <- page_html %>%
+  rvest::html_nodes("div.living-space") %>%
+  rvest::html_nodes("strong") %>%
+  html_text()
+# floor
+floor <- page_html %>%
+  rvest::html_nodes("div.floor") %>%
+  rvest::html_nodes("strong") %>%
+  html_text()
+# availability
+availability <- page_html %>%
+  rvest::html_nodes("div.availability") %>%
+  rvest::html_nodes("strong") %>%
+  html_text()
+# usable_surface
+usable_surface <- page_html %>%
+  rvest::html_nodes("div.usable-surface") %>%
+  rvest::html_nodes("strong") %>%
+  html_text()
+```
+
+## Part 1
+
+Build a dummy tibble:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# location,price,currency,object_type,rooms,living_space,floor,availability,usable_surface
+data <- dplyr::bind_cols(location=location,price=price,currency = price,rooms=rooms,living_space=living_space,floor=floor, availability=availability,usable_surface=usable_surface)
+```
+Now refine and correct it:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+data[(data=="Price on Request")]= NA
+data <- data %>%
+  mutate(currency = "CHF") %>%
+  mutate(price = as.numeric(price)) %>%
+  mutate(rooms = as.numeric(rooms))
+
+living_space <- pull(data,living_space)
+living_space_new <- str_remove(living_space, " m2")
+
+data <- data %>%
+  mutate(living_space = as.numeric(living_space_new))
+```
+
+## Part 2
+Create a scatterplot showing how price evolves with living space of the flat:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+ggplot(data, aes(x=price, y=living_space)) +
+  geom_point()
+```
+
+## Part 3
+
+Create a bar plot showing the number of properties by postcode:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+first_split <- data.frame(do.call('rbind',strsplit(as.character(data$location),',',fixed=TRUE)))
+second_split <- data.frame(do.call('rbind',strsplit(as.character(first_split$X2),' ',fixed=TRUE))) %>% as_tibble()
+postcode <- pull(second_split,X2)
+postcode[postcode=="quai"] = NA
+postcode[postcode=="Vessy"] = NA
+postcode[postcode=="avenue"] = NA
+postcode[postcode=="chemin"] = NA
+postcode[postcode=="route"] = NA
+postcode[postcode=="rue"] = NA
+postcode <- as.numeric(as.character(postcode))
+data <- data %>%
+  mutate(POSTCODE = postcode)
+ggplot(data, aes(x=POSTCODE, y=price)) +
+  geom_point()
+```
+Indeed, it seems that the agency is more active in the center (between the postcodes 1200 to 1225).
+
+## Part 4
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+data_temp <- data
+data_temp[data_temp=="Underground"] = NA
+data_temp <- data_temp %>%
+  mutate(floor = as.numeric(floor))
+
+data_temp %>%
+  filter(floor<7) %>%
+  ggplot(aes(x=living_space, y=price, color=POSTCODE)) +
+  geom_point() +
+  facet_grid(cols = vars(floor))
+```
+There is actually no clear message from this plot - only that the price correlates significantly with living space independently of the floor.
+
+## Part 5
+
+Do some data manipulation:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Retrieve the necessary information from the location column
+rm(first_split,second_split)
+first_split <- data.frame(do.call('rbind',strsplit(as.character(data$location),',',fixed=TRUE)))
+second_split <- data.frame(do.call('rbind',strsplit(as.character(first_split$X1),' ',fixed=TRUE))) %>% as_tibble()
+meta_information <- pull(second_split,X6)
+# Write the meta information in a new column of the data tibble
+data <- data %>%
+  mutate(ADDRESS_META = meta_information)
+```
+Create two groups: only with addresses only available on demand and the rest:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+data_part5 <- data %>%
+  select(price, living_space, floor, ADDRESS_META)
+# Use the meta_information column to distinguish between "request-addresses" and "regular-addresses"
+data_help <- pull(data_part5,ADDRESS_META)
+data_help[data_help!="request"] = "regular"
+data_part5 <- data %>%
+  mutate(ADDRESS_META = data_help)
+```
+Figure to check if "request-addresses" are more expensive (which indeed they are on average) - note that the label "NA" refers to all those flats where the address is actually given on the website (this is just for simplicity - it could be labelled differently and more intuitively of course):
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+data_part5 %>%
+  ggplot(aes(x=ADDRESS_META, y=price)) +
+  geom_boxplot()
+```
+Figure to check if "request-addresses" have bigger living space (which indeed they have on average):
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+data_part5 %>%
+  ggplot(aes(x=ADDRESS_META, y=living_space)) +
+  geom_boxplot()
+```
+Figure to check if "request-addresses" are generally located on a higher floor (the plot indicates that this is on first order not true - they're about equally distributed):
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+data_part5 %>%
+  ggplot(aes(x=ADDRESS_META, y=floor)) +
+  geom_point()
+```
+As I'd like not to register with Google to get the API key, I looked up some addressess manually with Google's Geocoding service based on the tibble above:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+#Rue de la Terrassière 58, 1207 Genève  = lat 46.199 long 6.160
+#Rue Liotard 46, 1202 Genève            = lat 46.211 long 6.130
+#Avenue Henri-Golay 36, 1219 Châtelaine = lat 46.207 long 6.110
+```
+
+Now we can do the plot - due to privacy reasons, only the Person-ID of the politician is provided in the popup:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+m <- leaflet() %>%
+  addTiles() %>%
+  addMarkers(lat=46.199, lng=6.160, popup="Price 1900 CHF, 3.0 Rooms") %>%
+  addMarkers(lat=46.211, lng=6.130, popup="Price 2100 CHF, 4.0 Rooms") %>%
+  addMarkers(lat=46.207, lng=6.110, popup="Price 2340	CHF, 4.0 Rooms")
+m  # Print the map
+```

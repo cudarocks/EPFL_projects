@@ -1,0 +1,222 @@
+---
+title: "Report6"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+## Load the R packages
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+library(knitr)
+library(readr)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(purrr)
+library(tibble)
+library(readxl)
+```
+
+## Preparations: read the Excel data and do some quick renaming and check what happened at the 1956 games:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Read data
+athletes <- read_excel("olympics.xlsx", sheet="athletes")
+games    <- read_excel("olympics.xlsx", sheet="games")
+country  <- read_excel("olympics.xlsx", sheet="country")
+medals   <- read_excel("olympics.xlsx", sheet="medals")
+# Rename column for later JOINS
+athletes <- athletes %>%
+  rename(athlete_id = ID)
+# What happened at the 1956 games?
+games %>% filter(Year==1956)
+```
+There were actually two Summer Games in 1956 - one in Melbourne and one in Stockholm!
+
+## Part 1
+
+Have some athletes competed for different countries over time?
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Do the necessary JOINS
+part1 <- athletes %>%
+  full_join(country)
+# Check summary statistics and remove duplicates
+part1 <- part1 %>%
+  group_by(Name, NOC) %>%
+  select(Name, NOC) %>%
+  distinct() %>%
+  group_by(Name) %>%
+  summarize(NUMBER_OF_COUNTRIES = n())
+```
+Indeed, `r part1 %>% filter(NUMBER_OF_COUNTRIES>1) %>% nrow()` athletes had various country affiliations.
+
+## Part 2
+
+Who are the ten athletes that took part in most games?
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Do the necessary JOINS
+part2 <- athletes %>%
+  full_join(country)
+# Summary statistics
+part2 %>%
+  group_by(Name) %>%
+  summarize(NUMBER_OF_GAMES = n()) %>%
+  arrange(desc(NUMBER_OF_GAMES)) %>%
+  head(10)
+```
+## Part 3
+
+What athlete(s) kept a Gold medal for the longest time?
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Do the necessary JOINS
+part3 <- athletes %>%
+  full_join(medals) %>%
+  filter(Medal == 'Gold') %>%
+  group_by(Name, Event) %>%
+  mutate(NUMBER_OF_GOLD_BY_EVENT = n()) %>%
+  ungroup() %>% 
+  filter(NUMBER_OF_GOLD_BY_EVENT>1) %>%
+  arrange(desc(NUMBER_OF_GOLD_BY_EVENT)) %>%
+  select(Name, Sex, Games, Team, Sport, Medal, NUMBER_OF_GOLD_BY_EVENT)
+  head(10)
+# Print
+part3
+```
+Considering Bobb'y comment "With keeping a gold medal we mean a gold medal on the same event", the tibble above shows that the Hungarian athlete *Aladr Gerevich (-Gerei)* won 6 gold medals in *Fencing Men's Sabre, Team* during at the following games: `r part3 %>% filter(Name=='Aladr Gerevich (-Gerei)') %>% pull(Games)`.
+
+## Part 4
+
+Based on the tibble of Part 3, Hungary kept a Gold medal for the longest time.
+
+## Part 5
+
+Who are the ten athletes that competed in the most events (some athletes take part in more than one event during games) ?
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Do the necessary JOINS
+part5 <- athletes %>%
+  full_join(country) %>% 
+  full_join(medals) %>%
+  distinct() %>%
+  group_by(Name, Games) %>%
+  summarise(NUMBER_OF_COMPETITIONS = n()) %>%
+  arrange(desc(NUMBER_OF_COMPETITIONS)) %>%
+  head(10)
+# Print
+part5
+```
+
+## Part 6
+
+Create a new table showing the number of medals per country (rows) and per year (column). Keep only the 15 countries with the most medals overall.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Compute the 15 countries with most medals
+part6_15countries <- games %>%
+  full_join(medals) %>% 
+  full_join(athletes) %>% 
+  select(Year, Team, Medal) %>%
+  filter((Medal=='Gold') | (Medal=='Silver') | (Medal=='Bronze')) %>% 
+  group_by(Team) %>%
+  summarize(TOTAL_MEDALS_OVERALL = n()) %>%
+  arrange(desc(TOTAL_MEDALS_OVERALL)) %>%
+  head(15)
+# Print
+part6_15countries
+```
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Pull the country names for later comparison
+top_countries <- pull(part6_15countries, Team)
+# Now the same joins again but keep only the 15 countries with most medals
+part6_medals <- games %>%
+  full_join(medals) %>% 
+  full_join(athletes) %>% 
+  select(Year, Team, Medal) %>%
+  filter(str_detect(Team, paste(top_countries, collapse = "|"))) %>%
+  filter(str_detect(Team, "-", negate = TRUE)) %>%
+  filter((Medal=='Gold') | (Medal=='Silver') | (Medal=='Bronze')) %>%
+  group_by(Year, Team) %>%
+  mutate(TOTAL_MEDALS = n()) %>%
+  distinct() %>%
+  ungroup() %>%
+  arrange(Year) %>%
+  select(Year, Team, TOTAL_MEDALS)
+# Print a snippet
+part6_medals %>% head(10)
+```
+
+## Part 7
+
+Create a scatterplot showing the average height and weight of competitors per sport (one dot per sport).
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Do the JOINS and compute the quantities
+part7 <- athletes %>%
+  full_join(medals) %>%
+  group_by(Sport) %>%
+  mutate(AVERAGE_HEIGHT = mean(Height, na.rm = TRUE)) %>% 
+  mutate(AVERAGE_WEIGHT = mean(Weight, na.rm = TRUE)) %>% 
+  mutate(AVERAGE_BMI    = mean((Weight / ((Height/100)*(Height/100))), na.rm = TRUE)) %>% 
+  select(AVERAGE_HEIGHT, AVERAGE_WEIGHT, AVERAGE_BMI, Sport) %>%
+  ungroup() %>%
+  distinct()
+# Print some values
+part7 %>% head(10)
+```
+Computer other variables
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Include the other quantities (nested, not piped)
+MAX_AVERAGE_HEIGHT = pull(arrange(part7,desc(AVERAGE_HEIGHT))["Sport"])[1]
+MIN_AVERAGE_HEIGHT = pull(arrange(part7,(AVERAGE_HEIGHT))["Sport"])[1]
+MAX_AVERAGE_WEIGHT = pull(arrange(part7,desc(AVERAGE_WEIGHT))["Sport"])[1]
+MIN_AVERAGE_WEIGHT = pull(arrange(part7,(AVERAGE_WEIGHT))["Sport"])[1]
+MAX_AVERAGE_BMI    = pull(arrange(part7,desc(AVERAGE_BMI))["Sport"])[1]
+MIN_AVERAGE_BMI    = pull(arrange(part7,(AVERAGE_BMI))["Sport"])[1]
+```
+The sport with the largest average height is `r MAX_AVERAGE_HEIGHT`.
+The sport with the smaller average height is `r MIN_AVERAGE_HEIGHT`.
+The sport with the largest average weight is `r MAX_AVERAGE_WEIGHT`.
+The sport with the smaller average weight is `r MIN_AVERAGE_WEIGHT`.
+The sport with the largest average BMI is `r MAX_AVERAGE_BMI`.
+The sport with the smaller average BMI is `r MIN_AVERAGE_BMI`.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width=7.5, fig.height=14}
+part7_filter <- filter(part7, Sport==MAX_AVERAGE_HEIGHT)
+
+ggplot(part7, aes(x=AVERAGE_HEIGHT, y=AVERAGE_WEIGHT, color=Sport)) +
+  geom_point() +
+  theme(legend.position="bottom") +
+  geom_text(data = filter(part7, Sport==MAX_AVERAGE_HEIGHT), aes(label = Sport)) + 
+  geom_text(data = filter(part7, Sport==MIN_AVERAGE_HEIGHT), aes(label = Sport)) + 
+  geom_text(data = filter(part7, Sport==MAX_AVERAGE_WEIGHT), aes(label = Sport)) + 
+  geom_text(data = filter(part7, Sport==MIN_AVERAGE_WEIGHT), aes(label = Sport)) + 
+  geom_text(data = filter(part7, Sport==MAX_AVERAGE_BMI), aes(label = Sport)) + 
+  geom_text(data = filter(part7, Sport==MIN_AVERAGE_BMI), aes(label = Sport))
+```
+## Part 8
+
+Create a line plot showing the number of medals given by year (one line for Gold, one line for Silver and one line for Bronze). Does it change over time? 
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Do the JOINS
+part8 <- games %>%
+  full_join(medals) %>%
+  group_by(Year, Medal) %>%
+  mutate(NUMBER_OF_MEDALS = n()) %>%
+  ungroup() %>%
+  distinct()
+```
+Do the plot:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Do the JOINS
+part8 %>%
+  filter((Medal=='Gold') | (Medal=='Silver') | (Medal=='Bronze')) %>%
+  ggplot(aes(x=Year, y=NUMBER_OF_MEDALS, colour=Medal)) + 
+  geom_line() +
+  facet_grid(rows = vars(Season))
+```
+There is actually quite a significant change in the number of medals awarded over the years and in terms of Season (Summer vs. Winter).
+ 

@@ -1,1 +1,1 @@
-# EPFL_projects
+# EPFL_Projects
